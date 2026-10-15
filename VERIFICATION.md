@@ -4,7 +4,7 @@ The delivered source was checked on Windows in the Codex execution environment. 
 
 | Check | Result |
 |---|---|
-| `npm test` | 12/12 passed: editable project round-trip, schema validation, undo/redo, partial erase, geometry, background independence, 20,000-object spatial lookup, page ranges, shortcut conflict/profile behavior, and atomic save. |
+| `npm test` | 15/15 passed (including eight-handle image/PDF pointer resizing, movement, undo/redo, proportional scaling and zoom-aware handle targeting): editable project round-trip, schema validation, undo/redo, partial erase, geometry, background independence, 20,000-object spatial lookup, page ranges, shortcut conflict/profile behavior, and atomic save. |
 | `npm run build` | Passed. Vite produced the production renderer and bundled PDF.js worker. |
 | `verify.html` browser integration | 21/21 passed. Covered presets, keyboard dispatch, typing safety, image resize/lock, two-page PDF rendering, annotated export with original page dimensions and searchable text, project assets, recovery data, transparent PNG, and viewport culling. The 20,000-object index and one visible frame took about 13 ms in the test browser; this is one sample, not a frame-rate guarantee. |
 | Manual browser UI | Canvas layout, stroke drawing, text editor, shortcut editor, appearance controls and recovery dialog opened and responded. |

@@ -1,3 +1,4 @@
+import { handleAt, resizeFromHandle } from "./transforms.js";
 import {
   uid,
   clone,
@@ -52,12 +53,17 @@ export class InputController {
     const l = this.app.doc.layers.find((l) => l.id === o.layer);
     return l?.visible && !l.locked && !o.locked;
   }
-  pick(p) {
+  pick(p, includeLockedMedia = false) {
     const layers = this.app.doc.layers;
     return this.renderer.index
       .query({ x: p.x - 10, y: p.y - 10, w: 20, h: 20 })
       .filter(
-        (o) => this.editable(o) && hit(o, p, 6 / this.app.doc.camera.zoom),
+        (o) =>
+          (this.editable(o) ||
+            (includeLockedMedia &&
+              ["image", "pdf"].includes(o.type) &&
+              layers.find((l) => l.id === o.layer)?.visible)) &&
+          hit(o, p, 6 / this.app.doc.camera.zoom),
       )
       .sort(
         (a, b) =>
@@ -148,11 +154,11 @@ export class InputController {
         b = selected.length ? union(selected) : null,
         z = app.doc.camera.zoom;
       let transform = null;
+      const handle = b ? handleAt(b, p, z) : null;
       if (b && Math.hypot(p.x - b.x - b.w / 2, p.y - b.y + 28 / z) < 12 / z)
         transform = "rotate";
-      else if (b && Math.hypot(p.x - b.x - b.w, p.y - b.y - b.h) < 14 / z)
-        transform = "resize";
-      const o = transform ? null : this.pick(p);
+      else if (handle) transform = "resize";
+      const o = transform ? null : this.pick(p, true);
       if (transform || o) {
         if (o && !app.selection.has(o.id)) {
           if (!e.shiftKey) app.selection.clear();
@@ -163,8 +169,16 @@ export class InputController {
             )
               app.selection.add(item.id);
         }
+        if (o && !this.editable(o)) {
+          app.inspectorVisible = true;
+          document.querySelector("#inspector").classList.remove("hidden");
+          app.updatePanels();
+          this.renderer.invalidate();
+          return;
+        }
         app.history.begin();
         this.gesture = {
+          handle,
           tool: transform || "move",
           id: e.pointerId,
           start: p,
@@ -222,7 +236,22 @@ export class InputController {
   }
   move(e) {
     const g = this.gesture;
-    if (!g || g.id !== e.pointerId) return;
+    if (!g) {
+      if (this.app.tool === "select") {
+        const selected = this.app.selected(),
+          p = this.world(e);
+        const h = selected.length
+          ? handleAt(union(selected), p, this.app.doc.camera.zoom)
+          : null;
+        this.surface.style.cursor = h
+          ? h.cursor
+          : this.pick(p)
+            ? "move"
+            : "default";
+      } else this.surface.style.cursor = "";
+      return;
+    }
+    if (g.id !== e.pointerId) return;
     const a = this.app,
       p = this.snap(this.point(e));
     if (g.tool === "pan") {
@@ -245,10 +274,19 @@ export class InputController {
           o.x += dx;
           o.y += dy;
         } else if (g.tool === "resize") {
-          let sx = Math.max(0.02, (b.w + dx) / b.w),
-            sy = Math.max(0.02, (b.h + dy) / b.h);
-          if (e.shiftKey) sx = sy = Math.max(sx, sy);
-          resizeObject(o, sx, sy, b);
+          const media = g.original.every((item) =>
+            ["image", "pdf"].includes(item.type),
+          );
+          const proportional =
+            media && g.handle.x && g.handle.y ? !e.shiftKey : e.shiftKey;
+          const { sx, sy, origin } = resizeFromHandle(
+            b,
+            g.handle,
+            dx,
+            dy,
+            proportional,
+          );
+          resizeObject(o, sx, sy, origin);
         } else {
           const cx = b.x + b.w / 2,
             cy = b.y + b.h / 2;

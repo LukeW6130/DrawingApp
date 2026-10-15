@@ -1019,6 +1019,29 @@ class App {
     );
     const selected = this.selected(true);
     if (selected.length) {
+      if (
+        selected.some(
+          (o) => ["image", "pdf"].includes(o.type) && !this.input.editable(o),
+        )
+      ) {
+        panel.append(
+          button("Unlock image / PDF to move", () =>
+            this.change(() => {
+              for (const o of selected) {
+                const layer = this.doc.layers.find((l) => l.id === o.layer);
+                if (layer?.locked) {
+                  // Keep other objects protected when unlocking this layer.
+                  this.doc.objects
+                    .filter((item) => item.layer === layer.id)
+                    .forEach((item) => (item.locked = true));
+                  layer.locked = false;
+                }
+                o.locked = false;
+              }
+            }),
+          ),
+        );
+      }
       panel.append(
         el("div", { class: "divider" }),
         el("div", { class: "label", text: `${selected.length} selected` }),
@@ -1538,7 +1561,12 @@ class App {
                   t.path,
                   t.dirty,
                 );
-                this.activate(Math.max(0, this.tabs.findIndex((tab) => tab.dirty)));
+              this.activate(
+                Math.max(
+                  0,
+                  this.tabs.findIndex((tab) => tab.dirty),
+                ),
+              );
               this.toast(
                 "Recovered editable notes. Save a project to keep them.",
               );

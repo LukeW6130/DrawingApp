@@ -234,3 +234,107 @@ test("atomic saves replace complete content and leave no temp files", async () =
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+import { handles, handleAt, resizeFromHandle } from "../src/transforms.js";
+test("all eight resize handles keep the opposite anchor fixed", () => {
+  const b = { x: 100, y: 50, w: 200, h: 100 };
+  for (const h of handles(b)) {
+    assert.equal(handleAt(b, { x: h.px, y: h.py }, 2).cursor, h.cursor);
+    const { sx, sy, origin } = resizeFromHandle(b, h, h.x * 40, h.y * 20);
+    const o = { ...b };
+    resizeObject(o, sx, sy, origin);
+    assert.equal(o.x + ((1 - h.x) * o.w) / 2, origin.x);
+    assert.equal(o.y + ((1 - h.y) * o.h) / 2, origin.y);
+    assert.equal(o.w, h.x ? 240 : 200);
+    assert.equal(o.h, h.y ? 120 : 100);
+  }
+});
+test("proportional resizing shrinks and grows without flipping", () => {
+  const b = { x: 0, y: 0, w: 200, h: 100 },
+    h = handles(b)[3];
+  const small = resizeFromHandle(b, h, -40, -10, true);
+  assert.equal(small.sx, 0.8);
+  assert.equal(small.sy, 0.8);
+  assert.equal(resizeFromHandle(b, h, -1000, -1000).sx, 0.02);
+  assert.equal(handleAt(b, { x: 208, y: 100 }, 1).x, 1);
+  assert.equal(handleAt(b, { x: 208, y: 100 }, 2), undefined);
+});
+
+import { InputController } from "../src/input.js";
+import { union } from "../src/model.js";
+test("image and PDF pointer gestures resize from every handle, move, and undo", () => {
+  for (const type of ["image", "pdf"])
+    for (let i = 0; i < 8; i++) {
+      const doc = newDocument(),
+        noop = () => {};
+      doc.camera = { x: 0, y: 0, zoom: 1 };
+      doc.objects = [
+        {
+          id: "media",
+          type,
+          layer: doc.activeLayer,
+          x: 100,
+          y: 100,
+          w: 200,
+          h: 100,
+        },
+      ];
+      const index = new SpatialIndex();
+      index.rebuild(doc.objects);
+      const surface = {
+        style: {},
+        focus: noop,
+        setPointerCapture: noop,
+        releasePointerCapture: noop,
+        getBoundingClientRect: () => ({ left: 0, top: 0 }),
+      };
+      const renderer = {
+        overlay: surface,
+        index,
+        world: (p) => p,
+        invalidate: noop,
+        rebuild: () => index.rebuild(doc.objects),
+      };
+      const app = {
+        doc,
+        renderer,
+        settings: { snap: false },
+        tool: "select",
+        selection: new Set(["media"]),
+        history: new History(doc),
+        updatePanels: noop,
+        changed: noop,
+      };
+      const input = Object.create(InputController.prototype);
+      Object.assign(input, { app, renderer, surface, gesture: null });
+      app.selected = () =>
+        doc.objects.filter((o) => app.selection.has(o.id) && input.editable(o));
+      const event = (x, y) => ({
+        clientX: x,
+        clientY: y,
+        pointerId: 1,
+        pointerType: "mouse",
+        button: 0,
+        preventDefault: noop,
+      });
+      const h = handles(union(doc.objects))[i];
+      input.down(event(h.px, h.py));
+      assert.equal(input.gesture.tool, "resize");
+      input.move(event(h.px + h.x * 30, h.py + h.y * 20));
+      input.up(event(0, 0));
+      assert.ok(doc.objects[0].w > 200 || doc.objects[0].h > 100);
+      app.history.undo();
+      assert.equal(doc.objects[0].w, 200);
+      app.history.redo();
+      assert.ok(doc.objects[0].w > 200 || doc.objects[0].h > 100);
+      app.history.undo();
+      renderer.rebuild();
+      input.down(event(200, 150));
+      input.move(event(225, 175));
+      input.up(event(225, 175));
+      assert.equal(doc.objects[0].x, 125);
+      assert.equal(doc.objects[0].y, 125);
+      app.history.undo();
+      assert.equal(doc.objects[0].x, 100);
+    }
+});

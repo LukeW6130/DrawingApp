@@ -1,3 +1,4 @@
+import { handles } from "./transforms.js";
 import { SpatialIndex, bounds, union } from "./model.js";
 export class Renderer {
   constructor(canvas, overlay, getDoc, getSettings) {
@@ -304,14 +305,14 @@ export class Renderer {
     if (selected.length) {
       const b = union(selected);
       top.strokeRect(b.x, b.y, b.w, b.h);
-      const h = 7 / c.zoom;
-      for (const p of [
-        { x: b.x, y: b.y },
-        { x: b.x + b.w, y: b.y },
-        { x: b.x, y: b.y + b.h },
-        { x: b.x + b.w, y: b.y + b.h },
-      ])
-        top.fillRect(p.x - h / 2, p.y - h / 2, h, h);
+      for (const p of handles(b)) {
+        top.beginPath();
+        top.arc(p.px, p.py, 4 / c.zoom, 0, Math.PI * 2);
+        top.fillStyle = "#111111";
+        top.fill();
+        top.stroke();
+      }
+      top.fillStyle = this.settings().theme.selection;
       top.beginPath();
       top.moveTo(b.x + b.w / 2, b.y);
       top.lineTo(b.x + b.w / 2, b.y - 24 / c.zoom);

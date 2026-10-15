@@ -73,3 +73,9 @@ npm run test:ui
 Record the action, expected/actual result, Windows version, tablet model/driver, and whether it happens with both mouse and stylus. For PDF issues, note page count, original page rotation and whether the failure is in viewing or export. Save a disposable `.nocturne` reproduction if possible.
 
 If native launch fails, try the source launch above and copy the terminal error. The delivery environment could build the unpacked Windows app but could not launch Electron, so native startup, hardware pressure, clipboard variants and the desktop restart test still need your Windows-session check. See `VERIFICATION.md` for the exact completed checks and limitations.
+
+### Move and resize imported images and PDF pages
+1. Choose Select (V), then click an image or PDF page.
+2. If locked, click **Unlock image / PDF to move** in the inspector. Other objects remain locked. Tab hides the inspector again.
+3. Drag the image body to move it. Drag any circular corner or edge handle to resize. Media corners preserve proportions; hold Shift for free corner resizing. Edge handles stretch one dimension (Shift preserves proportions).
+4. Check all four corners and four edges, then Ctrl+Z / Ctrl+Y to undo / redo. Save and reopen to check the position persists. Repeat at different zoom levels and with a PDF page.
