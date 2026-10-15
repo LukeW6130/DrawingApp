@@ -1,0 +1,45 @@
+{
+  "type": "nocturne-appearance",
+  "version": 1,
+  "theme": {
+    "background": "#101218",
+    "panel": "#191d25",
+    "text": "#eceff6",
+    "accent": "#ad9bff",
+    "selection": "#a793ff",
+    "icons": "#c9cedb"
+  },
+  "background": {
+    "color": "#000000",
+    "pattern": "solid",
+    "spacing": 32,
+    "thickness": 1,
+    "colorGrid": "#526173",
+    "opacity": 0.3,
+    "guides": false
+  },
+  "uiScale": 1,
+  "toolbarSide": "left",
+  "toolbarSize": 44,
+  "hiddenTools": [
+    "pen",
+    "highlighter",
+    "partial",
+    "lasso",
+    "line",
+    "arrow",
+    "rect",
+    "ellipse",
+    "polygon",
+    "eyedropper",
+    "region"
+  ],
+  "toolOrder": [],
+  "swatches": [
+    "#f4f5f7",
+    "#63a8ff",
+    "#ff686b",
+    "#6bdaa3",
+    "#ffd56a"
+  ]
+}

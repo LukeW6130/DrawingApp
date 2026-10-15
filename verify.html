@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nocturne integration verification</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <pre
+      id="verification"
+      style="
+        position: fixed;
+        inset: 30px;
+        z-index: 100;
+        background: #121722;
+        color: #e5ecff;
+        overflow: auto;
+        padding: 30px;
+        font: 14px/1.7 monospace;
+      "
+    >
+Running integration checks…</pre>
+    <script type="module" src="/src/app.js"></script>
+    <script type="module" src="/tests/browser.test.js"></script>
+  </body>
+</html>
