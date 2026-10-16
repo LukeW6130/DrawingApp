@@ -9,6 +9,7 @@ const {
 const fs = require("node:fs/promises"),
   path = require("node:path");
 const { atomicWrite } = require("./storage.cjs");
+const { projectFilename } = require("./filename.cjs");
 let win;
 const allowed = new Set();
 const root = () => app.getPath("userData");
@@ -59,11 +60,17 @@ ipcMain.handle("open", async (_, kind) => {
   }
   return files;
 });
-ipcMain.handle("save", async (_, data, file, saveAs) => {
+ipcMain.handle("save", async (_, data, file, saveAs, name) => {
   if (typeof data !== "string") throw Error("Invalid document");
   if (!file || saveAs || !allowed.has(file)) {
     const result = await dialog.showSaveDialog(win, {
-      defaultPath: file || "Untitled.nocturne",
+      defaultPath:
+        file && !saveAs
+          ? file
+          : path.join(
+              file ? path.dirname(file) : app.getPath("documents"),
+              projectFilename(name),
+            ),
       filters: [{ name: "Nocturne project", extensions: ["nocturne"] }],
     });
     if (result.canceled) return null;
@@ -110,38 +117,43 @@ ipcMain.handle("fullscreen", () => {
   return win.isFullScreen();
 });
 ipcMain.handle("clipboard", async () => {
-  const formats = clipboard.availableFormats();
-  const files = [];
-  // CF_HDROP: DROPFILES header followed by a double-null-terminated Windows path list.
-  if (formats.includes("CF_HDROP")) {
-    const b = clipboard.readBuffer("CF_HDROP");
-    if (b.length >= 20) {
-      const off = b.readUInt32LE(0),
-        wide = b.readUInt32LE(16) !== 0;
-      if (off >= 20 && off < b.length) {
-        const names = b
-          .subarray(off)
-          .toString(wide ? "utf16le" : "latin1")
-          .split("\0")
-          .filter(Boolean);
-        for (const name of names)
-          if (/\.(pdf|png|jpe?g|webp|bmp)$/i.test(name))
-            files.push(await readFile(name));
-      }
+  const items = await clipboard.read(),
+    files = [];
+  for (const item of items) {
+    for (const type of item.types) {
+      if (!/CF_HDROP|FileNameW/.test(type)) continue;
+      const blob = await item.getType(type),
+        b = Buffer.from(await blob.arrayBuffer());
+      let names = [];
+      if (type.includes("CF_HDROP") && b.length >= 20) {
+        const offset = b.readUInt32LE(0),
+          wide = b.readUInt32LE(16) !== 0;
+        if (offset >= 20 && offset < b.length)
+          names = b
+            .subarray(offset)
+            .toString(wide ? "utf16le" : "latin1")
+            .split("\0")
+            .filter(Boolean);
+      } else if (type.includes("FileNameW"))
+        names = [b.toString("utf16le").split("\0")[0]];
+      for (const name of names)
+        if (/\.(pdf|png|jpe?g|webp|bmp)$/i.test(name))
+          files.push(await readFile(name));
     }
   }
   if (files.length) return { files };
-  if (formats.includes("FileNameW")) {
-    const name = clipboard
-      .readBuffer("FileNameW")
-      .toString("utf16le")
-      .split("\0")[0];
-    if (/\.(pdf|png|jpe?g|webp|bmp)$/i.test(name))
-      return { files: [await readFile(name)] };
+  for (const item of items) {
+    const type = item.types.find((type) =>
+      /^image\/(png|jpeg|webp|bmp)$/.test(type),
+    );
+    if (type) {
+      const blob = await item.getType(type);
+      return {
+        image: `data:${type};base64,${Buffer.from(await blob.arrayBuffer()).toString("base64")}`,
+      };
+    }
   }
-  const img = clipboard.readImage();
-  if (!img.isEmpty()) return { image: img.toDataURL() };
-  return { text: clipboard.readText() };
+  return { text: await clipboard.readText() };
 });
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);

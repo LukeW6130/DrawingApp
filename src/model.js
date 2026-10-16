@@ -40,8 +40,14 @@ export function defaultSettings() {
       accent: "#ad9bff",
       selection: "#a793ff",
       icons: "#c9cedb",
+      muted: "#a7afbf",
+      border: "#404550",
+      hover: "#292f3a",
+      focus: "#ad9bff",
     },
     uiScale: 1,
+    shortcutLabels: false,
+    largeControls: false,
     toolbarSide: "left",
     toolbarSize: 44,
     touch: "pan",
@@ -53,7 +59,6 @@ export function defaultSettings() {
     darkPdf: false,
     bindings: {},
     hiddenTools: [
-      "pen",
       "highlighter",
       "partial",
       "lasso",
@@ -259,7 +264,7 @@ export function resizeObject(o, sx, sy, origin) {
   if (o.fontSize) o.fontSize *= sy;
 }
 export function erasePartial(o, p, r) {
-  if (o.type !== "stroke" || !hit(o, p, r)) return [o];
+  if (!["stroke", "line"].includes(o.type) || !hit(o, p, r)) return [o];
   const q = localPoint(o, p),
     runs = [];
   let run = [];
@@ -275,7 +280,7 @@ export function erasePartial(o, p, r) {
       dense.push({
         x: a.x + ((b.x - a.x) * j) / n,
         y: a.y + ((b.y - a.y) * j) / n,
-        p: a.p + ((b.p - a.p) * j) / n,
+        p: (a.p ?? 1) + (((b.p ?? 1) - (a.p ?? 1)) * j) / n,
       });
   }
   for (const v of dense) {
@@ -298,7 +303,7 @@ export function erasePartial(o, p, r) {
             p: v.p,
           };
         }),
-        { ...o, id: uid(), rotation: 0 },
+        { ...o, type: "stroke", id: uid(), rotation: 0 },
       ),
     )
     .map((v) => {
@@ -361,7 +366,41 @@ export class History {
     const { assets, ...rest } = this.doc;
     return { state: clone(rest), assets: { ...assets } };
   }
+  objectSnapshot(ids) {
+    const wanted = new Set(ids);
+    return {
+      kind: "objects",
+      objects: clone(this.doc.objects.filter((o) => wanted.has(o.id))),
+    };
+  }
+  beginObjects(objects) {
+    if (!this.pending)
+      this.pending = this.objectSnapshot(objects.map((o) => o.id));
+  }
+  changeObjects(objects, fn) {
+    this.beginObjects(objects);
+    try {
+      fn();
+      return this.commit();
+    } catch (error) {
+      this.restore(this.pending);
+      this.pending = null;
+      throw error;
+    }
+  }
+  inverse(entry) {
+    return entry.kind === "objects"
+      ? this.objectSnapshot(entry.objects.map((o) => o.id))
+      : this.snapshot();
+  }
   restore(s) {
+    if (s.kind === "objects") {
+      const replacements = new Map(s.objects.map((o) => [o.id, clone(o)]));
+      this.doc.objects = this.doc.objects.map(
+        (o) => replacements.get(o.id) || o,
+      );
+      return;
+    }
     for (const k of Object.keys(this.doc)) delete this.doc[k];
     Object.assign(this.doc, clone(s.state), { assets: { ...s.assets } });
   }
@@ -372,6 +411,17 @@ export class History {
     if (!this.pending) return false;
     const before = this.pending;
     this.pending = null;
+    if (before.kind === "objects") {
+      if (
+        JSON.stringify(before.objects) ===
+        JSON.stringify(this.inverse(before).objects)
+      )
+        return false;
+      this.undoStack.push(before);
+      if (this.undoStack.length > 150) this.undoStack.shift();
+      this.redoStack = [];
+      return true;
+    }
     if (
       JSON.stringify(before.state) === JSON.stringify(this.snapshot().state) &&
       Object.keys(before.assets).join() === Object.keys(this.doc.assets).join()
@@ -395,14 +445,16 @@ export class History {
   }
   undo() {
     if (!this.undoStack.length) return false;
-    this.redoStack.push(this.snapshot());
-    this.restore(this.undoStack.pop());
+    const entry = this.undoStack.pop();
+    this.redoStack.push(this.inverse(entry));
+    this.restore(entry);
     return true;
   }
   redo() {
     if (!this.redoStack.length) return false;
-    this.undoStack.push(this.snapshot());
-    this.restore(this.redoStack.pop());
+    const entry = this.redoStack.pop();
+    this.undoStack.push(this.inverse(entry));
+    this.restore(entry);
     return true;
   }
 }

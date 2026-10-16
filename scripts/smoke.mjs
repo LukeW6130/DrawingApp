@@ -114,12 +114,20 @@ assert.equal(
   true,
 );
 // Actual Windows clipboard image bridge.
-await app.evaluate(({ clipboard, nativeImage }) => {
-  clipboard.writeImage(
-    nativeImage.createFromDataURL(
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
-    ),
-  );
+await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+  await clipboard.write([
+    new ClipboardItem({
+      "image/png": new Blob(
+        [
+          Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+            "base64",
+          ),
+        ],
+        { type: "image/png" },
+      ),
+    }),
+  ]);
 });
 const beforePaste = await page.evaluate(() => nocturne.doc.objects.length);
 await page.keyboard.press("Control+v");

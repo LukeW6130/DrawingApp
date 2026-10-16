@@ -176,7 +176,7 @@ export class InputController {
           this.renderer.invalidate();
           return;
         }
-        app.history.begin();
+        app.history.beginObjects(app.selected());
         this.gesture = {
           handle,
           tool: transform || "move",
@@ -389,20 +389,47 @@ export class InputController {
   }
   erase(p, tool) {
     const a = this.app,
-      r = Math.max(8, a.width * 2) / Math.sqrt(a.doc.camera.zoom),
-      near = new Set(
-        this.renderer.index
-          .query({ x: p.x - r, y: p.y - r, w: r * 2, h: r * 2 })
-          .filter(
-            (o) => this.editable(o) && o.type === "stroke" && hit(o, p, r),
-          )
-          .map((o) => o.id),
-      );
-    if (!near.size) return;
-    a.doc.objects = a.doc.objects.flatMap((o) =>
-      !near.has(o.id) ? [o] : tool === "partial" ? erasePartial(o, p, r) : [],
+      r = (a.eraserSize || 24) / 2;
+    const start = this.gesture?.eraseLast || p;
+    if (this.gesture) this.gesture.eraseLast = p;
+    const count = Math.max(
+      1,
+      Math.ceil(
+        Math.hypot(p.x - start.x, p.y - start.y) / Math.max(0.5, r / 2),
+      ),
     );
-    this.renderer.rebuild();
+    const samples = Array.from({ length: count + 1 }, (_, i) => ({
+      x: start.x + ((p.x - start.x) * i) / count,
+      y: start.y + ((p.y - start.y) * i) / count,
+    }));
+    const near = new Set(
+      this.renderer.index
+        .query({
+          x: Math.min(start.x, p.x) - r,
+          y: Math.min(start.y, p.y) - r,
+          w: Math.abs(p.x - start.x) + 2 * r,
+          h: Math.abs(p.y - start.y) + 2 * r,
+        })
+        .filter((o) => this.editable(o) && ["stroke", "line"].includes(o.type))
+        .map((o) => o.id),
+    );
+    let changed = false;
+    a.doc.objects = a.doc.objects.flatMap((o) => {
+      if (!near.has(o.id)) return [o];
+      if (tool === "eraser") {
+        if (samples.some((q) => hit(o, q, r))) {
+          changed = true;
+          return [];
+        }
+        return [o];
+      }
+      let pieces = [o];
+      for (const q of samples)
+        pieces = pieces.flatMap((piece) => erasePartial(piece, q, r));
+      if (pieces.length !== 1 || pieces[0] !== o) changed = true;
+      return pieces;
+    });
+    if (changed) this.renderer.rebuild();
   }
   up(e) {
     const g = this.gesture;

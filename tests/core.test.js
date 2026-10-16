@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, readdir, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -219,6 +219,7 @@ test("binding profile round trip, validation, and reserved shortcuts", () => {
   assert.equal(typingTarget({ closest: () => ({}) }), true);
 });
 test("atomic saves replace complete content and leave no temp files", async () => {
+  await mkdir(path.join(process.cwd(), "test-results"), { recursive: true });
   const dir = await mkdtemp(
     path.join(process.cwd(), "test-results", "nocturne-test-"),
   );
@@ -337,4 +338,177 @@ test("image and PDF pointer gestures resize from every handle, move, and undo", 
       app.history.undo();
       assert.equal(doc.objects[0].x, 100);
     }
+});
+
+import {
+  initializeRevision,
+  edited,
+  saveRevision,
+  RecoveryWriter,
+} from "../src/persistence.js";
+import { updateStyle, matchesPreset } from "../src/tool-state.js";
+const { projectFilename } = createRequire(import.meta.url)(
+  "../electron/filename.cjs",
+);
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((a, b) => {
+    resolve = a;
+    reject = b;
+  });
+  return { promise, resolve, reject };
+};
+test("save captures a revision and name; later edits remain dirty", async () => {
+  const tab = initializeRevision({
+    doc: newDocument("Calculus"),
+    dirty: true,
+    path: null,
+  });
+  const gate = deferred();
+  let written;
+  const save = saveRevision(tab, (data, name) => {
+    written = { data, name };
+    return gate.promise;
+  });
+  tab.doc.name = "Calculus II";
+  edited(tab);
+  gate.resolve("calculus.nocturne");
+  await save;
+  assert.equal(JSON.parse(written.data).name, "Calculus");
+  assert.equal(written.name, "Calculus");
+  assert.equal(tab.savedRevision, 1);
+  assert.equal(tab.revision, 2);
+  assert.equal(tab.dirty, true);
+  await saveRevision(tab, async () => "calculus.nocturne");
+  assert.equal(tab.dirty, false);
+});
+test("failed and cancelled saves preserve dirty state", async () => {
+  const tab = initializeRevision({ doc: newDocument(), dirty: true });
+  await assert.rejects(
+    saveRevision(tab, async () => {
+      throw Error("Disk full");
+    }),
+    /Disk full/,
+  );
+  assert.equal(tab.dirty, true);
+  assert.equal(tab.saving, null);
+  assert.equal(await saveRevision(tab, async () => null), false);
+  assert.equal(tab.dirty, true);
+});
+test("recovery snapshots are immutable, queued, and propagate failures", async () => {
+  const tab = initializeRevision({ doc: newDocument("Before"), dirty: true }),
+    writer = new RecoveryWriter(),
+    gate = deferred();
+  let snapshot;
+  const pending = writer.write([tab], async (docs) => {
+    snapshot = docs;
+    await gate.promise;
+  });
+  tab.doc.name = "After";
+  edited(tab);
+  writer.changed();
+  await Promise.resolve();
+  assert.equal(snapshot[0].doc.name, "Before");
+  gate.resolve();
+  await pending;
+  assert.equal(writer.dirty, true);
+  await assert.rejects(
+    writer.write([tab], async () => {
+      throw Error("Disk full");
+    }),
+    /Disk full/,
+  );
+  assert.equal(writer.dirty, true);
+  await writer.write([tab], async () => {});
+  assert.equal(writer.dirty, false);
+  assert.equal(tab.recoveryRevision, 2);
+});
+test("Windows filenames use document name and sanitize reserved characters", () => {
+  assert.equal(projectFilename("Calculus notes"), "Calculus notes.nocturne");
+  assert.equal(
+    projectFilename("Week 1: extrema?"),
+    "Week 1- extrema-.nocturne",
+  );
+  assert.equal(projectFilename("CON"), "_CON.nocturne");
+  assert.equal(projectFilename("..."), "Untitled.nocturne");
+});
+test("preset matching requires all properties and shared limits apply", () => {
+  const preset = defaultSettings().presets[0],
+    state = { ...preset };
+  assert.equal(matchesPreset(state, preset), true);
+  for (const patch of [
+    { width: 4 },
+    { opacity: 0.5 },
+    { smoothing: 0.7 },
+    { color: "#000000" },
+    { tool: "highlighter" },
+  ]) {
+    Object.assign(state, preset);
+    updateStyle(state, patch);
+    assert.equal(matchesPreset(state, preset), false);
+  }
+  updateStyle(state, { width: 900, eraserSize: 1 });
+  assert.equal(state.width, 200);
+  assert.equal(state.eraserSize, 2);
+});
+test("partial eraser splits recognized lines with finite pressure", () => {
+  const doc = newDocument(),
+    line = {
+      ...stroke(doc),
+      type: "line",
+      points: [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ],
+    };
+  const pieces = erasePartial(line, { x: 60, y: 30 }, 8);
+  assert.equal(pieces.length, 2);
+  assert.ok(pieces.every((o) => o.points.every((p) => Number.isFinite(p.p))));
+});
+test("fast swept eraser removes freehand and straight ink between samples", () => {
+  const doc = newDocument();
+  doc.objects = [
+    stroke(doc),
+    { ...stroke(doc), id: "line", type: "line", y: 80 },
+  ];
+  const index = new SpatialIndex();
+  index.rebuild(doc.objects);
+  const app = { doc, eraserSize: 12 };
+  const input = Object.create(InputController.prototype);
+  Object.assign(input, {
+    app,
+    gesture: { eraseLast: { x: 60, y: 0 } },
+    renderer: { index, rebuild: () => index.rebuild(doc.objects) },
+  });
+  input.erase({ x: 60, y: 120 }, "eraser");
+  assert.equal(doc.objects.length, 0);
+});
+
+test("targeted object history interleaves with full-document history and preserves individual styles", () => {
+  const doc = newDocument();
+  doc.objects = [
+    stroke(doc),
+    { ...stroke(doc), id: "second", color: "#00ff00" },
+  ];
+  const history = new History(doc);
+  const original = doc.objects.map((o) => o.color);
+  history.changeObjects(doc.objects, () =>
+    doc.objects.forEach((o) => (o.color = "#ff0000")),
+  );
+  history.change(() => (doc.layers[0].name = "Renamed"));
+  history.undo();
+  history.undo();
+  assert.deepEqual(
+    doc.objects.map((o) => o.color),
+    original,
+  );
+  history.redo();
+  history.redo();
+  assert.equal(doc.layers[0].name, "Renamed");
+  assert.ok(doc.objects.every((o) => o.color === "#ff0000"));
+  history.beginObjects(doc.objects);
+  doc.objects[0].x = 900;
+  history.restore(history.pending);
+  history.pending = null;
+  assert.equal(doc.objects[0].x, 10);
 });
