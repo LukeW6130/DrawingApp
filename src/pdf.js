@@ -17,6 +17,7 @@ export class PdfManager {
     this.docs = new Map();
     this.pending = new Map();
     this.queue = Promise.resolve();
+    this.cacheBudget = 128 * 1024 * 1024;
     renderer.onPdfNeeded = (o, z) => this.ensure(o, z).catch(() => {});
   }
   async load(asset) {
@@ -81,7 +82,11 @@ export class PdfManager {
         Math.min(4, Math.ceil(zoom * (devicePixelRatio || 1) * 2) / 2),
       ),
       current = this.renderer.pdfPages.get(key);
-    if (current && current.scale >= scale) return;
+    if (current && current.scale >= scale) {
+      this.renderer.pdfPages.delete(key);
+      this.renderer.pdfPages.set(key, current);
+      return;
+    }
     if (this.pending.has(key)) return this.pending.get(key);
     const task = this.queue.then(async () => {
       const pdf = await this.load(asset),
@@ -95,12 +100,24 @@ export class PdfManager {
       canvas.height = Math.ceil(v.height);
       await page.render({ canvasContext: canvas.getContext("2d"), viewport: v })
         .promise;
-      this.renderer.pdfPages.set(key, { canvas, scale });
-      while (!this.pinCache && this.renderer.pdfPages.size > 24) {
-        const oldest = this.renderer.pdfPages.keys().next().value;
-        if (oldest === key) break;
-        this.renderer.pdfPages.delete(oldest);
+      const entry = { canvas, scale, bytes: canvas.width * canvas.height * 4 };
+      const previous = this.renderer.pdfPages.get(key);
+      if (
+        this.pinCache &&
+        this.cacheBytes() - (previous?.bytes || 0) + entry.bytes >
+          256 * 1024 * 1024
+      ) {
+        canvas.width = canvas.height = 0;
+        throw Error(
+          "PDF export needs more than 256 MB of page images. Export fewer pages or reduce resolution.",
+        );
       }
+      if (previous) {
+        previous.canvas.width = previous.canvas.height = 0;
+        this.renderer.pdfPages.delete(key);
+      }
+      this.renderer.pdfPages.set(key, entry);
+      this.trimCache();
       this.renderer.invalidate();
     });
     this.queue = task.catch(() => {});
@@ -110,6 +127,48 @@ export class PdfManager {
     } finally {
       this.pending.delete(key);
     }
+  }
+  cacheBytes() {
+    return [...this.renderer.pdfPages.values()].reduce(
+      (sum, e) => sum + (e.bytes || e.canvas.width * e.canvas.height * 4),
+      0,
+    );
+  }
+  trimCache() {
+    while (
+      !this.pinCache &&
+      this.cacheBytes() > this.cacheBudget &&
+      this.renderer.pdfPages.size > 1
+    ) {
+      const key = this.renderer.pdfPages.keys().next().value,
+        entry = this.renderer.pdfPages.get(key);
+      entry.canvas.width = entry.canvas.height = 0;
+      this.renderer.pdfPages.delete(key);
+    }
+  }
+  releaseUnused(tabs) {
+    const assets = new Set(
+      tabs.flatMap((t) => t.doc.objects.map((o) => o.asset).filter(Boolean)),
+    );
+    for (const [key, promise] of this.docs)
+      if (!assets.has(key)) {
+        promise.then((pdf) => pdf.destroy()).catch(() => {});
+        this.docs.delete(key);
+      }
+    for (const [key, entry] of this.renderer.pdfPages)
+      if (!assets.has(key.split(":")[0])) {
+        entry.canvas.width = entry.canvas.height = 0;
+        this.renderer.pdfPages.delete(key);
+      }
+    const images = new Set(
+      tabs.flatMap((t) =>
+        t.doc.objects
+          .filter((o) => o.type === "image")
+          .map((o) => t.doc.assets[o.asset]?.data),
+      ),
+    );
+    for (const [key] of this.renderer.images)
+      if (!images.has(key)) this.renderer.images.delete(key);
   }
 }
 export function exportCanvas(

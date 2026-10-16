@@ -1,7 +1,7 @@
 dialog {
   background: var(--panel);
   color: var(--text);
-  border: 1px solid #ffffff20;
+  border: 1px solid var(--border);
   border-radius: 14px;
   padding: 0;
   box-shadow: 0 24px 100px #000c;
@@ -20,7 +20,7 @@ dialog::backdrop {
   border-bottom: 1px solid #ffffff10;
 }
 .dialog-head h2 {
-  font-size: 17px;
+  font-size: 1.308rem;
   margin: 0;
   font-weight: 600;
 }
@@ -52,7 +52,7 @@ dialog::backdrop {
   flex-direction: column;
   gap: 8px;
   color: #a9b0c0;
-  font-size: 12px;
+  font-size: 0.923rem;
 }
 .check {
   flex-direction: row !important;
@@ -71,12 +71,12 @@ dialog::backdrop {
 .binding-row small {
   display: block;
   color: #838da2;
-  font-size: 10px;
+  font-size: 0.769rem;
   margin-top: 4px;
 }
 .binding-row button {
   padding: 5px 8px;
-  font-size: 11px;
+  font-size: 0.846rem;
 }
 .binding-chip {
   display: flex;
@@ -96,7 +96,7 @@ dialog::backdrop {
   margin-bottom: 12px;
 }
 .notice {
-  font-size: 12px;
+  font-size: 0.923rem;
   line-height: 1.65;
   color: #a7b0c2;
   background: #ffffff05;
@@ -155,7 +155,7 @@ dialog::backdrop {
   color: #ff9696;
   white-space: pre-wrap;
   margin-top: 12px;
-  font-size: 12px;
+  font-size: 0.923rem;
 }
 .help-grid {
   display: grid;
@@ -163,7 +163,7 @@ dialog::backdrop {
   gap: 18px;
 }
 .help-grid p {
-  font-size: 12px;
+  font-size: 0.923rem;
   line-height: 1.7;
   color: #a9b2c4;
 }

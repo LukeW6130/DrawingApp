@@ -115,6 +115,27 @@ export function settingsDialog(app, initial = "appearance") {
   function appearance() {
     const grid = el("div", { class: "settings-grid" });
     content.append(grid);
+    field(
+      grid,
+      "Larger pen/touch controls",
+      "checkbox",
+      app.settings.largeControls,
+      (v) => {
+        app.settings.largeControls = v;
+        app.persist();
+      },
+    );
+    field(
+      grid,
+      "Show tool shortcuts",
+      "checkbox",
+      app.settings.shortcutLabels,
+      (v) => {
+        app.settings.shortcutLabels = v;
+        app.buildToolbar();
+        app.persist();
+      },
+    );
     const bg = app.doc.background;
     const setBg = (key, value) => app.change(() => (bg[key] = value));
     colorField(grid, "Canvas background", bg.color, (v) => setBg("color", v));

@@ -70,8 +70,12 @@ export class CommandRegistry {
       this.bindings(c.id).includes(binding),
     );
   }
+  available(id) {
+    const c = this.commands.get(id);
+    return !!c && (!c.available || c.available());
+  }
   run(id) {
-    return this.commands.get(id)?.run();
+    if (this.available(id)) return this.commands.get(id).run();
   }
   tooltip(id) {
     const c = this.commands.get(id);

@@ -1,3 +1,17 @@
+import {
+  LIMITS,
+  updateStyle,
+  matchesPreset,
+  mixedValue,
+} from "./tool-state.js";
+import { icon } from "./icons.js";
+import { ToolCursor } from "./cursor.js";
+import {
+  initializeRevision,
+  edited,
+  saveRevision,
+  RecoveryWriter,
+} from "./persistence.js";
 import "./style.css";
 import {
   newDocument,
@@ -21,7 +35,15 @@ import {
   annotatedPdf,
   exportCanvas,
 } from "./pdf.js";
-import { el, button, dialog, ask, esc, readJSONFile } from "./ui.js";
+import {
+  el,
+  button,
+  dialog,
+  ask,
+  esc,
+  readJSONFile,
+  propertyPopover,
+} from "./ui.js";
 import { settingsDialog } from "./settings.js";
 const TOOLS = [
   ["pen", "Pen", "⌁"],
@@ -50,11 +72,13 @@ class App {
     this.width = 3;
     this.opacity = 1;
     this.smoothing = 0.35;
+    this.eraserSize = 24;
+    this.fontSize = 24;
     this.selection = new Set();
     this.clipboardObjects = null;
     this.inspectorVisible = false;
     this.toolbarVisible = true;
-    this.dirtyRecovery = false;
+    this.recovery = new RecoveryWriter();
     this.persistTimer = null;
     this.TOOLS = TOOLS;
   }
@@ -87,6 +111,14 @@ class App {
     });
     this.registerCommands();
     this.registerPropertyCommands();
+    for (const c of this.registry.commands.values()) {
+      if (c.id.startsWith("selection.") && c.id !== "selection.unlockAll")
+        c.available = () => this.selected(true).length > 0;
+      if (c.id === "edit.undo")
+        c.available = () => this.history.undoStack.length > 0;
+      if (c.id === "edit.redo")
+        c.available = () => this.history.redoStack.length > 0;
+    }
     this.renderer = new Renderer(
       document.querySelector("#canvas"),
       document.querySelector("#ink"),
@@ -96,6 +128,7 @@ class App {
     this.renderer.selection = this.selection;
     this.pdf = new PdfManager(this.renderer);
     this.input = new InputController(this);
+    this.cursor = new ToolCursor(this);
     this.bindEvents();
     this.applyTheme();
     this.buildToolbar();
@@ -104,17 +137,20 @@ class App {
     this.renderer.rebuild();
     await this.restoreRecovery();
     setInterval(() => {
-      if (this.dirtyRecovery) this.autosave();
+      if (this.recovery.dirty) this.safe(() => this.autosave());
     }, 8000);
     window.nocturne = this;
   }
   addTab(doc, path = null, dirty = false) {
-    this.tabs.push({ doc, path, dirty, history: new History(doc) });
+    this.tabs.push(
+      initializeRevision({ doc, path, dirty, history: new History(doc) }),
+    );
+    this.recovery.changed();
     this.current = this.tabs.length - 1;
   }
   mount() {
     document.querySelector("#app").innerHTML =
-      `<main id="shell"><header id="topbar"><div class="brand"><span class="brand-mark">◒</span><span>NOCTURNE<br><small>SPACE TO THINK</small></span></div><button id="file-menu">File ▾</button><span id="title">Untitled</span><span class="grow"></span><button data-cmd="edit.undo" aria-label="Undo">↶</button><button data-cmd="edit.redo" aria-label="Redo">↷</button><span style="width:10px"></span><button data-cmd="view.zoomOut">−</button><button id="zoom" data-cmd="view.reset">100%</button><button data-cmd="view.zoomIn">+</button><button data-cmd="file.export">Export ↗</button><button data-cmd="view.inspector" aria-label="Toggle inspector">☷</button><button data-cmd="app.settings" aria-label="Settings">⚙</button></header><nav id="tabs"></nav><div id="workarea"><nav id="toolbar" aria-label="Drawing tools"></nav><section id="canvas-wrap" aria-label="Infinite drawing canvas"><canvas id="canvas"></canvas><canvas id="ink" tabindex="0" aria-label="Drawing input surface"></canvas><div id="quick-properties" aria-label="Quick pen properties"></div><div class="welcome" id="welcome"><div class="orbit">◒</div><h1>A little space for big ideas.</h1><p>Write, sketch, and work things out.<br>Choose a pen to begin, or drop a PDF here.</p></div><div class="bottom-hint"><span><kbd>Space</kbd> pan</span><span><kbd>Ctrl</kbd> + scroll to zoom</span><span><kbd>Ctrl K</kbd> commands</span></div></section><aside id="inspector" class="hidden"></aside></div><footer id="statusbar"><span id="status">All work stays on this device</span><span id="coordinates">Infinite canvas · origin 0, 0</span></footer></main><button class="focus-exit" data-cmd="view.focus">Exit focus</button><div id="toast" class="hidden" role="status"></div>`;
+      `<main id="shell"><header id="topbar"><div class="brand"><span class="brand-mark">◒</span><span>NOCTURNE<br><small>SPACE TO THINK</small></span></div><button id="file-menu">File ▾</button><span id="title">Untitled</span><span class="grow"></span><button data-cmd="edit.undo" aria-label="Undo">↶</button><button data-cmd="edit.redo" aria-label="Redo">↷</button><span style="width:10px"></span><button data-cmd="view.zoomOut">−</button><button id="zoom" data-cmd="view.reset">100%</button><button data-cmd="view.zoomIn">+</button><button data-cmd="file.export">Export ↗</button><button data-cmd="view.inspector" aria-label="Toggle inspector">☷</button><button data-cmd="app.settings" aria-label="Settings">⚙</button><button class="header-overflow" data-cmd="app.commands" aria-label="More actions">More</button></header><nav id="tabs"></nav><div id="workarea"><nav id="toolbar" aria-label="Drawing tools"></nav><section id="canvas-wrap" aria-label="Infinite drawing canvas"><canvas id="canvas"></canvas><canvas id="ink" tabindex="0" aria-label="Drawing input surface"></canvas><div id="quick-properties" aria-label="Quick pen properties"></div><div class="welcome" id="welcome"><div class="orbit">◒</div><h1>A little space for big ideas.</h1><p>Write, sketch, and work things out.<br>Choose a pen to begin, or drop a PDF here.</p></div><div class="bottom-hint"><span><kbd>Space</kbd> pan</span><span><kbd>Ctrl</kbd> + scroll to zoom</span><span><kbd>Ctrl K</kbd> commands</span></div></section><aside id="inspector" class="hidden"></aside></div><footer id="statusbar"><span id="status">All work stays on this device</span><span id="coordinates">Infinite canvas · origin 0, 0</span></footer></main><button class="focus-exit" data-cmd="view.focus">Exit focus</button><div id="toast" class="hidden" role="status"></div>`;
   }
   registerCommands() {
     const add = (id, label, category, run, keys = [], extra = {}) =>
@@ -175,11 +211,11 @@ class App {
       ["]"],
     );
     add("style.opacityDown", "Decrease opacity", "Stroke", () => {
-      this.opacity = Math.max(0.05, this.opacity - 0.1);
+      this.setStyle({ opacity: Math.max(0.05, this.opacity - 0.1) });
       this.updatePanels();
     });
     add("style.opacityUp", "Increase opacity", "Stroke", () => {
-      this.opacity = Math.min(1, this.opacity + 0.1);
+      this.setStyle({ opacity: Math.min(1, this.opacity + 0.1) });
       this.updatePanels();
     });
     add(
@@ -506,13 +542,7 @@ class App {
         `Preset: ${p.name}`,
         "Presets",
         () => {
-          this.tool = p.tool;
-          this.color = p.color;
-          this.width = p.width;
-          this.opacity = p.opacity;
-          this.smoothing = p.smoothing;
-          this.buildToolbar();
-          this.updatePanels();
+          this.setStyle(p);
         },
         /^pen[1-5]$/.test(p.id) ? [p.id.slice(-1)] : [],
       ),
@@ -546,8 +576,7 @@ class App {
               const value = +v.value;
               if (!Number.isFinite(value) || value < min || value > max)
                 throw Error(`Enter a value between ${min} and ${max}.`);
-              this[key] = value;
-              this.updatePanels();
+              this.setStyle({ [key]: value });
             },
           ),
       );
@@ -569,7 +598,7 @@ class App {
       "Increase smoothing",
       "Stroke",
       () => {
-        this.smoothing = Math.min(0.95, this.smoothing + 0.1);
+        this.setStyle({ smoothing: Math.min(0.95, this.smoothing + 0.1) });
         this.updatePanels();
       },
     );
@@ -578,37 +607,131 @@ class App {
       "Decrease smoothing",
       "Stroke",
       () => {
-        this.smoothing = Math.max(0, this.smoothing - 0.1);
+        this.setStyle({ smoothing: Math.max(0, this.smoothing - 0.1) });
         this.updatePanels();
       },
     );
+  }
+  changeSelectedStyle(objects, key, value) {
+    if (
+      this.history.changeObjects(objects, () =>
+        objects.forEach((o) => (o[key] = value)),
+      )
+    )
+      this.changed();
+  }
+  styleControl(panel, key, label, selected = null) {
+    const value = selected ? mixedValue(selected, key) : this[key];
+    const b = button(
+      `${label}: ${value == null ? "Mixed" : Number(value.toFixed(2))}`,
+      () =>
+        propertyPopover(b, label, LIMITS[key], value ?? this[key], (v) => {
+          if (selected) this.changeSelectedStyle(selected, key, v);
+          else this.setStyle({ [key]: v });
+        }),
+      "",
+      label,
+    );
+    panel.append(b);
+  }
+  selectedStyleControls(panel) {
+    const objects = this.selected().filter((o) =>
+      [
+        "stroke",
+        "line",
+        "arrow",
+        "rect",
+        "ellipse",
+        "polygon",
+        "text",
+      ].includes(o.type),
+    );
+    if (!objects.length) return;
+    panel.append(
+      el("p", { class: "label", text: `Selected objects (${objects.length})` }),
+    );
+    const value = mixedValue(objects, "color"),
+      color = el("input", {
+        type: "color",
+        value: value || this.color,
+        "aria-label": "Selected-object color",
+      });
+    if (value === null) panel.append(el("small", { text: "Mixed colors" }));
+    color.onchange = () =>
+      this.changeSelectedStyle(objects, "color", color.value);
+    panel.append(color);
+    const strokes = objects.filter((o) => o.type !== "text");
+    if (strokes.length) this.styleControl(panel, "width", "Width", strokes);
+    this.styleControl(panel, "opacity", "Opacity", objects);
   }
   quickProperties() {
     const panel = document.querySelector("#quick-properties");
     if (!panel) return;
     panel.replaceChildren();
-    for (const [id, symbol, value] of [
-      ["width", "═", this.width.toFixed(1) + " px"],
-      ["opacity", "◐", Math.round(this.opacity * 100) + "%"],
-      ["smoothing", "⌁", Math.round(this.smoothing * 100) + "%"],
-    ]) {
-      const b = button(
-        "",
-        () => this.registry.run(`style.${id}`),
-        "",
-        this.registry.tooltip(`style.${id}`),
+    const tool = this.tool;
+    if (tool === "select" || tool === "lasso") {
+      this.selectedStyleControls(panel);
+      panel.append(
+        button("Properties", () => this.registry.run("view.inspector")),
+        button("Delete", () => this.deleteSelection()),
       );
-      b.append(el("span", { text: symbol }), el("small", { text: value }));
-      panel.append(b);
+      return;
     }
+    if (tool === "pan") {
+      for (const [id, label] of [
+        ["view.zoomIn", "Zoom +"],
+        ["view.zoomOut", "Zoom −"],
+        ["view.fit", "Fit"],
+      ])
+        panel.append(
+          button(
+            label,
+            () => this.registry.run(id),
+            "",
+            this.registry.tooltip(id),
+          ),
+        );
+      return;
+    }
+    if (["eraser", "partial"].includes(tool)) {
+      panel.append(el("small", { text: "Erase" }));
+      this.styleControl(panel, "eraserSize", "Size");
+      panel.append(
+        button(tool === "eraser" ? "Whole stroke" : "Partial", () =>
+          this.setTool(tool === "eraser" ? "partial" : "eraser"),
+        ),
+      );
+      const ring = el("div", {
+        class: "eraser-preview",
+        title: "Eraser diameter in canvas units",
+      });
+      panel.append(ring);
+      return;
+    }
+    panel.append(
+      el("small", { text: tool === "text" ? "New text" : "New ink" }),
+    );
+    this.styleControl(
+      panel,
+      tool === "text" ? "fontSize" : "width",
+      tool === "text" ? "Font" : "Width",
+    );
+    this.styleControl(panel, "opacity", "Opacity");
+    if (["pen", "highlighter"].includes(tool))
+      this.styleControl(panel, "smoothing", "Smooth");
     const c = el("input", {
       type: "color",
       value: this.color,
       "aria-label": "Quick ink color",
-      title: this.registry.tooltip("style.color"),
     });
     c.onchange = () => this.setColor(c.value);
     panel.append(c);
+    const preview = el("div", {
+      class: "stroke-preview",
+      "aria-label": "Stroke preview",
+    });
+    preview.innerHTML = `<svg viewBox="0 0 60 24" width="52" height="24"><path d="M5 18Q15 3 30 12T55 7" fill="none" stroke="${this.color}" stroke-width="${Math.min(15, this.width)}" opacity="${this.opacity}" stroke-linecap="round"/></svg>`;
+    panel.append(preview);
   }
   bindEvents() {
     document.addEventListener("click", (e) => {
@@ -643,10 +766,10 @@ class App {
       this.safe(() => this.importBrowserFiles([...e.dataTransfer.files]));
     });
     window.addEventListener("beforeunload", (e) => {
-      this.autosave();
+      this.safe(() => this.autosave());
       if (this.tabs.some((t) => t.dirty) && !this.allowClose) {
         e.preventDefault();
-        e.returnValue = "Unsaved changes are recoverable on next launch.";
+        e.returnValue = "Unsaved changes have not been saved to a file.";
         if (window.desktop) this.closeWindowDialog();
       }
     });
@@ -688,46 +811,62 @@ class App {
       s.setProperty(key === "background" ? "--bg" : `--${key}`, value);
     s.setProperty("--scale", this.settings.uiScale);
     s.setProperty("--tool-size", this.settings.toolbarSize + "px");
+    document.body.classList.toggle(
+      "large-controls",
+      this.settings.largeControls,
+    );
     document
       .querySelector("#workarea")
       .classList.toggle("toolbar-right", this.settings.toolbarSide === "right");
     this.renderer?.invalidate();
   }
-  setTool(tool) {
-    this.tool = tool;
+  setStyle(patch) {
+    updateStyle(this, patch);
     this.buildToolbar();
     this.updatePanels();
-    document.querySelector("#ink").style.cursor =
-      tool === "pan" ? "grab" : tool === "select" ? "default" : "crosshair";
+    this.cursor?.update();
+  }
+  setTool(tool) {
+    this.setStyle({ tool });
   }
   setColor(color) {
-    if (!/^#[\da-f]{6}$/i.test(color))
-      throw Error("Enter a six-digit HEX color, for example #63a8ff.");
-    this.color = color;
+    this.setStyle({ color });
     this.settings.recentColors = [
-      color,
-      ...this.settings.recentColors.filter((c) => c !== color),
+      this.color,
+      ...this.settings.recentColors.filter((c) => c !== this.color),
     ].slice(0, 10);
     this.persist();
-    this.updatePanels();
   }
-  setWidth(value) {
-    this.width = Math.max(0.2, Math.min(200, value));
-    this.updatePanels();
+  setWidth(width) {
+    this.setStyle({ width });
   }
   buildToolbar() {
     if (!this.registry) return;
     const bar = document.querySelector("#toolbar");
     bar.replaceChildren();
     const ordered = this.orderedTools();
-    for (const [id, label, icon] of ordered) {
-      if (this.settings.hiddenTools.includes(id)) continue;
+    for (const [id, label] of ordered) {
+      if (["line", "arrow", "rect", "ellipse", "polygon"].includes(id))
+        continue;
+      if (
+        this.settings.hiddenTools.includes(id) &&
+        !["pen", "eraser", "select", "text", "pan"].includes(id)
+      )
+        continue;
       const b = button(
-        icon,
+        "",
         () => this.registry.run(`tool.${id}`),
         this.tool === id ? "active" : "",
         this.registry.tooltip(`tool.${id}`),
       );
+      b.innerHTML = icon(id);
+      b.setAttribute("aria-pressed", this.tool === id);
+      if (this.settings.shortcutLabels)
+        b.append(
+          el("small", {
+            text: this.registry.bindings(`tool.${id}`).join(" / "),
+          }),
+        );
       b.setAttribute("aria-label", label);
       bar.append(b);
     }
@@ -736,9 +875,8 @@ class App {
       const b = button(
         "",
         () => this.registry.run(`preset.${p.id}`),
-        "preset" +
-          (this.color === p.color && this.tool === p.tool ? " active" : ""),
-        this.registry.tooltip(`preset.${p.id}`),
+        "preset" + (matchesPreset(this, p) ? " active" : ""),
+        `${this.registry.tooltip(`preset.${p.id}`)} · ${p.width} px · ${Math.round(p.opacity * 100)}% opacity`,
       );
       b.innerHTML = `<span class="pen-dot" style="--swatch:${esc(p.color)}"></span>`;
       b.setAttribute("aria-label", p.name);
@@ -746,12 +884,35 @@ class App {
     }
     const presetButtons = [...bar.querySelectorAll(".preset")];
     bar.prepend(...presetButtons, el("div", { class: "divider" }));
+    const shapes = button(
+      "Shapes",
+      () => {
+        const body = el("div", { class: "stack" });
+        const d = dialog("Shapes", body);
+        for (const id of ["line", "arrow", "rect", "ellipse", "polygon"])
+          body.append(
+            button(this.registry.tooltip(`tool.${id}`), () => {
+              d.close();
+              this.registry.run(`tool.${id}`);
+            }),
+          );
+      },
+      "rail-label",
+      "Shapes",
+    );
     bar.append(
+      shapes,
       button(
-        "+",
+        "Import",
+        () => this.registry.run("file.import"),
+        "rail-label",
+        this.registry.tooltip("file.import"),
+      ),
+      button(
+        "More",
         () => this.registry.run("app.commands"),
-        "",
-        "All tools & commands",
+        "rail-label",
+        "More tools and commands",
       ),
     );
     bar.querySelectorAll(".preset").forEach((b, i) => {
@@ -787,7 +948,17 @@ class App {
       b.onauxclick = (e) => {
         if (e.button === 1) this.closeTab(i);
       };
-      t.append(b);
+      const wrap = el("div", { class: "tab-item" }, [b]);
+      if (this.tabs.length > 1)
+        wrap.append(
+          button(
+            "×",
+            () => this.closeTab(this.tabs.indexOf(tab)),
+            "tab-close",
+            `Close ${tab.doc.name}`,
+          ),
+        );
+      t.append(wrap);
     });
     t.append(
       button("+", () => this.registry.run("file.new"), "", "New document"),
@@ -795,6 +966,7 @@ class App {
     t.classList.toggle("single-tab", this.tabs.length === 1);
     document.querySelector("#title").textContent =
       this.doc.name + (this.tab.dirty ? " •" : "");
+    this.updateStatus();
   }
   activate(i) {
     this.input?.cancel();
@@ -818,8 +990,8 @@ class App {
     if (this.history.change(fn)) this.changed();
   }
   changed() {
-    this.tab.dirty = true;
-    this.dirtyRecovery = true;
+    edited(this.tab);
+    this.recovery.changed();
     for (const id of this.selection)
       if (!this.doc.objects.some((o) => o.id === id)) this.selection.delete(id);
     this.renderer.rebuild();
@@ -828,15 +1000,14 @@ class App {
     document
       .querySelector("#welcome")
       .classList.toggle("hidden", this.doc.objects.length > 0);
-    document.querySelector("#status").textContent =
-      `${this.doc.objects.length.toLocaleString()} objects · ${this.doc.layers.length} layers · Unsaved changes`;
+    this.updateStatus();
   }
   updateZoom() {
     document.querySelector("#zoom").textContent =
       Math.round(this.doc.camera.zoom * 100) + "%";
     document.querySelector("#coordinates").textContent =
       `${Math.round(-this.doc.camera.x / this.doc.camera.zoom)}, ${Math.round(-this.doc.camera.y / this.doc.camera.zoom)} · Infinite canvas`;
-    this.dirtyRecovery = true;
+    this.recovery.changed();
   }
   zoomAt(
     factor,
@@ -940,84 +1111,140 @@ class App {
         text: TOOLS.find((t) => t[0] === this.tool)?.[1] || "Properties",
       }),
     );
-    const row = el("div", { class: "row" }),
-      color = el("input", { type: "color", "aria-label": "Stroke color" });
-    color.value = this.color;
-    color.oninput = () => {
-      this.color = color.value;
-    };
-    color.onchange = () => this.setColor(color.value);
-    const hex = el("input", {
-      type: "text",
-      value: this.color,
-      "aria-label": "HEX stroke color",
-      style: "width:135px",
-    });
-    hex.onchange = () => this.safe(() => this.setColor(hex.value));
-    row.append(color, hex);
-    panel.append(
-      el("div", { class: "field" }, [el("label", { text: "INK COLOR" }), row]),
-    );
-    const swatches = el("div", { class: "swatches" });
-    for (const c of [
-      ...new Set([...this.settings.swatches, ...this.settings.recentColors]),
-    ])
-      swatches.append(
-        el("button", {
-          class: "swatch",
-          style: `--swatch:${c}`,
-          title: c,
-          "aria-label": `Color ${c}`,
-          onClick: () => this.setColor(c),
-        }),
+    if (
+      [
+        "pen",
+        "highlighter",
+        "line",
+        "arrow",
+        "rect",
+        "ellipse",
+        "polygon",
+      ].includes(this.tool)
+    ) {
+      panel.append(
+        el("p", { class: "label", text: "New strokes (drawing style)" }),
       );
-    panel.append(swatches, el("div", { class: "divider" }));
-    for (const [label, value, min, max, step, handler] of [
-      ["Stroke width", this.width, 0.2, 80, 0.2, (v) => (this.width = v)],
-      ["Opacity", this.opacity, 0.05, 1, 0.01, (v) => (this.opacity = v)],
-      ["Smoothing", this.smoothing, 0, 0.95, 0.01, (v) => (this.smoothing = v)],
-    ]) {
-      const output = el("span", {
-          class: "value",
-          text:
-            label === "Stroke width"
-              ? value.toFixed(1) + " px"
-              : Math.round(value * 100) + "%",
-        }),
-        range = el("input", {
-          type: "range",
-          min,
-          max,
-          step,
-          value,
-          "aria-label": label,
-        });
-      range.oninput = () => {
-        handler(+range.value);
-        output.textContent =
-          label === "Stroke width"
-            ? (+range.value).toFixed(1) + " px"
-            : Math.round(+range.value * 100) + "%";
-      };
+      const row = el("div", { class: "row" }),
+        color = el("input", { type: "color", "aria-label": "Stroke color" });
+      color.value = this.color;
+
+      color.onchange = () => this.setColor(color.value);
+      const hex = el("input", {
+        type: "text",
+        value: this.color,
+        "aria-label": "HEX stroke color",
+        style: "width:135px",
+      });
+      hex.onchange = () => this.safe(() => this.setColor(hex.value));
+      row.append(color, hex);
       panel.append(
         el("div", { class: "field" }, [
-          el("label", { class: "row between" }, [
-            el("span", { text: label }),
-            output,
-          ]),
-          range,
+          el("label", { text: "INK COLOR" }),
+          row,
         ]),
       );
+      const swatches = el("div", { class: "swatches" });
+      for (const c of [
+        ...new Set([...this.settings.swatches, ...this.settings.recentColors]),
+      ])
+        swatches.append(
+          el("button", {
+            class: "swatch",
+            style: `--swatch:${c}`,
+            title: c,
+            "aria-label": `Color ${c}`,
+            onClick: () => this.setColor(c),
+          }),
+        );
+      panel.append(swatches, el("div", { class: "divider" }));
+      for (const [label, value, min, max, step, handler] of [
+        [
+          "Stroke width",
+          this.width,
+          ...LIMITS.width,
+          (v) => this.setStyle({ width: v }),
+        ],
+        [
+          "Opacity",
+          this.opacity,
+          0.05,
+          1,
+          0.01,
+          (v) => this.setStyle({ opacity: v }),
+        ],
+        [
+          "Smoothing",
+          this.smoothing,
+          0,
+          0.95,
+          0.01,
+          (v) => this.setStyle({ smoothing: v }),
+        ],
+      ]) {
+        const output = el("span", {
+            class: "value",
+            text:
+              label === "Stroke width"
+                ? value.toFixed(1) + " px"
+                : Math.round(value * 100) + "%",
+          }),
+          range = el("input", {
+            type: "range",
+            min,
+            max,
+            step,
+            value,
+            "aria-label": label,
+          });
+        range.onchange = () => handler(+range.value);
+        range.oninput = () => {
+          output.textContent =
+            label === "Stroke width"
+              ? (+range.value).toFixed(1) + " px"
+              : Math.round(+range.value * 100) + "%";
+        };
+        panel.append(
+          el("div", { class: "field" }, [
+            el("label", { class: "row between" }, [
+              el("span", { text: label }),
+              output,
+            ]),
+            range,
+          ]),
+        );
+      }
+      panel.append(
+        button(
+          "Save as preset",
+          () => this.savePreset(),
+          "",
+          "Capture current tool, color and stroke settings",
+        ),
+      );
+    } else if (["eraser", "partial"].includes(this.tool)) {
+      this.styleControl(panel, "eraserSize", "Eraser size");
+      panel.append(
+        button("Whole-stroke eraser", () => this.setTool("eraser")),
+        button("Partial eraser", () => this.setTool("partial")),
+      );
+    } else if (this.tool === "text") {
+      this.styleControl(panel, "fontSize", "New text size");
+      const color = el("input", {
+        type: "color",
+        value: this.color,
+        "aria-label": "New text color",
+      });
+      color.onchange = () => this.setColor(color.value);
+      panel.append(color);
+    } else if (this.tool === "pan") {
+      panel.append(
+        button("Fit content", () => this.fit()),
+        button("Reset zoom", () => this.registry.run("view.reset")),
+      );
     }
-    panel.append(
-      button(
-        "Save as preset",
-        () => this.savePreset(),
-        "",
-        "Capture current tool, color and stroke settings",
-      ),
-    );
     const selected = this.selected(true);
+    this.selectedStyleControls(panel);
     if (selected.length) {
       if (
         selected.some(
@@ -1114,7 +1341,7 @@ class App {
       const entry = el("div", {
           class: "layer" + (layer.id === this.doc.activeLayer ? " active" : ""),
         }),
-        name = el("span", {
+        name = el("button", {
           class: "layer-name",
           text: layer.name,
           title: "Click to activate · double-click to rename",
@@ -1308,7 +1535,7 @@ class App {
         this.change(() => {
           const value = text.value,
             lines = value.split("\n"),
-            font = object?.fontSize || 24,
+            font = object?.fontSize || this.fontSize,
             ctx = this.renderer.canvas.getContext("2d");
           ctx.font = `${font}px "Segoe UI"`;
           const model = {
@@ -1399,25 +1626,47 @@ class App {
       },
     );
   }
+  updateStatus() {
+    const tab = this.tab;
+    const state = tab.saving
+      ? "Saving…"
+      : tab.dirty
+        ? tab.recoveryRevision === tab.revision
+          ? "Unsaved changes · Recovery updated"
+          : "Unsaved changes"
+        : tab.savedRevision > 0 || tab.path
+          ? "Saved to file"
+          : "Not saved to a file";
+    document.querySelector("#status").textContent =
+      `${state} · ${tab.doc.objects.length.toLocaleString()} objects`;
+  }
   async save(saveAs = false) {
-    const tab = this.tab,
-      data = serialize(tab.doc);
-    if (window.desktop) {
-      const file = await desktop.save(data, tab.path, saveAs);
-      if (!file) return false;
-      tab.path = file;
-    } else
+    const tab = this.tab;
+    const task = saveRevision(tab, async (data, name, path) => {
+      if (window.desktop) return desktop.save(data, path, saveAs, name);
       await this.download(
         new TextEncoder().encode(data),
-        `${tab.doc.name}.nocturne`,
+        `${name.replace(/[<>:"/\\|?*]/g, "-") || "Untitled"}.nocturne`,
       );
-    tab.dirty = false;
-    this.updateTabs();
-    await this.autosave();
-    this.toast("Project saved with editable objects and embedded assets.");
-    document.querySelector("#status").textContent =
-      "Saved · All work stays on this device";
-    return true;
+      return true;
+    });
+    this.updateStatus();
+    try {
+      const saved = await task;
+      if (saved) {
+        this.recovery.changed();
+        await this.safe(() => this.autosave());
+        this.toast(
+          tab.dirty
+            ? "Snapshot saved; newer edits remain unsaved."
+            : "Project saved to file.",
+        );
+      }
+      return saved;
+    } finally {
+      this.updateTabs();
+      this.updateStatus();
+    }
   }
   async open() {
     if (window.desktop) {
@@ -1478,7 +1727,7 @@ class App {
             primary: true,
             run: async (d) => {
               this.activate(i);
-              if (await this.save()) {
+              if ((await this.save()) && !tab.dirty) {
                 d.close();
                 this.removeTab(i);
               }
@@ -1491,22 +1740,31 @@ class App {
     this.removeTab(i);
   }
   removeTab(i) {
+    const active = this.tab;
+    this.input.cancel();
     this.tabs.splice(i, 1);
+    this.pdf.releaseUnused(this.tabs);
     if (!this.tabs.length) this.addTab(newDocument());
-    this.activate(Math.min(this.current, this.tabs.length - 1));
-    this.autosave();
+    this.current = this.tabs.includes(active)
+      ? this.tabs.indexOf(active)
+      : Math.min(i, this.tabs.length - 1);
+    this.activate(this.current);
+    this.recovery.changed();
+    this.safe(() => this.autosave());
   }
   closeWindowDialog() {
     if (document.querySelector("dialog[open]")) return;
     dialog(
       "Close Nocturne?",
-      `<p>Unsaved tabs have recovery copies. Save your work or keep recovery copies for the next launch.</p>`,
+      `<p>Recovery is separate from saving a project file. Closing will first write a fresh recovery copy for the next launch.</p>`,
       [
         { label: "Keep working", run: (d) => d.close() },
         {
           label: "Close with recovery",
           run: async (d) => {
-            await this.autosave();
+            do {
+              await this.autosave();
+            } while (this.recovery.dirty);
             this.allowClose = true;
             d.close();
             window.close();
@@ -1516,17 +1774,18 @@ class App {
     );
   }
   async autosave() {
-    const docs = this.tabs.map((t) => ({
-      doc: t.doc,
-      path: t.path,
-      dirty: t.dirty,
-    }));
     try {
-      if (window.desktop) await desktop.autosave(docs);
-      else localStorage.setItem("nocturne.recovery", JSON.stringify(docs));
-      this.dirtyRecovery = false;
-    } catch (e) {
-      this.toast("Recovery save failed: " + e.message);
+      await this.recovery.write(this.tabs, (docs) =>
+        window.desktop
+          ? desktop.autosave(docs)
+          : localStorage.setItem("nocturne.recovery", JSON.stringify(docs)),
+      );
+      this.updateStatus();
+    } catch (error) {
+      throw Error(
+        "Recovery could not be written. Keep this window open, check free disk space and folder access, then retry or save a project file. " +
+          error.message,
+      );
     }
   }
   async restoreRecovery() {
@@ -1711,7 +1970,78 @@ class App {
         );
       },
       "Import pages",
+      (form, d) => {
+        const preview = el("div", { class: "pdf-import-preview" }),
+          message = el("p", { class: "muted", role: "status" });
+        form.prepend(message, preview);
+        let revision = 0;
+        const refresh = async () => {
+          const own = ++revision;
+          message.textContent = "Preparing page thumbnails…";
+          try {
+            const v = Object.fromEntries(new FormData(form));
+            const pages = await this.pdf.importPages(
+              asset,
+              v.pages,
+              v.layout,
+              Math.max(1, +v.columns),
+              Math.max(0, +v.gap),
+              { x: 0, y: 0 },
+            );
+            if (own !== revision || !d.open) return;
+            preview.replaceChildren();
+            const box = union(pages),
+              scale = Math.min(360 / box.w, 180 / box.h);
+            const layout = el("div", {
+              class: "pdf-layout",
+              style: `height:${Math.max(20, box.h * scale)}px`,
+            });
+            for (const page of pages)
+              layout.append(
+                el("span", {
+                  text: String(page.page + 1),
+                  style: `left:${(page.x - box.x) * scale}px;top:${(page.y - box.y) * scale}px;width:${Math.max(4, page.w * scale)}px;height:${Math.max(4, page.h * scale)}px`,
+                }),
+              );
+            preview.append(layout);
+            const thumbs = el("div", { class: "pdf-thumbnails" });
+            preview.append(thumbs);
+            for (const item of pages.slice(0, 6)) {
+              if (own !== revision || !d.open) return;
+              const page = await pdf.getPage(item.page + 1),
+                v = page.getViewport({
+                  scale: Math.min(100 / item.w, 130 / item.h),
+                }),
+                canvas = document.createElement("canvas");
+              canvas.width = Math.ceil(v.width);
+              canvas.height = Math.ceil(v.height);
+              await page.render({
+                canvasContext: canvas.getContext("2d"),
+                viewport: v,
+              }).promise;
+              if (own !== revision || !d.open) return;
+              thumbs.append(
+                el("figure", {}, [
+                  el("img", {
+                    src: canvas.toDataURL(),
+                    alt: `Page ${item.page + 1}`,
+                  }),
+                  el("figcaption", { text: `Page ${item.page + 1}` }),
+                ]),
+              );
+              canvas.width = canvas.height = 0;
+            }
+            message.textContent = `${pages.length} of ${pdf.numPages} pages · ${v.layout} placement · first ${Math.min(6, pages.length)} thumbnails`;
+          } catch (error) {
+            message.textContent = error.message;
+          }
+        };
+        form.addEventListener("change", refresh);
+        d.addEventListener("close", () => revision++);
+        refresh();
+      },
     );
+    this.pdf.releaseUnused(this.tabs);
   }
   async download(bytes, name) {
     if (window.desktop && /\.(png|pdf|json)$/.test(name))
@@ -1738,16 +2068,20 @@ class App {
     });
   }
   async exportDialog() {
+    let busy = false;
     const body = el("div");
-    body.innerHTML = `<div class="settings-grid"><label>Format<select name="format"><option value="png">PNG image</option><option value="pages">Annotated PDF pages · preserve original PDF</option><option value="vector">Vector PDF · canvas region</option><option value="flatten">Flattened PDF · canvas region</option></select></label><label>Area<select name="area"><option value="all">All visible content</option><option value="selection">Selected objects</option><option value="region">Chosen export region</option></select></label><label>Resolution<select name="scale"><option value="1">1× · 72 canvas pixels/inch</option><option value="2" selected>2× · 144 pixels/inch</option><option value="4">4× · 288 pixels/inch</option></select></label><label class="check"><input name="background" type="checkbox" checked> Include canvas background</label></div><p class="notice">Annotated PDF keeps original PDF text and vectors and adds vector ink. Original PDF pages stay opaque; dark viewing mode is display-only. Vector canvas export is for notes without PDF backgrounds. Flattened PDF preserves the on-screen appearance as images. Unicode text in vector exports uses an image fallback.</p><button id="preview-export">Update preview</button><img class="export-preview" alt="Export preview"><div class="error"></div>`;
+    body.innerHTML = `<div class="settings-grid"><label>Format<select name="format"><option value="png">PNG image</option><option value="pages">Annotated PDF pages · preserve original PDF</option><option value="vector">Vector PDF · canvas region</option><option value="flatten">Flattened PDF · canvas region</option></select></label><label>Area<select name="area"><option value="all">All visible content</option><option value="selection">Selected objects</option><option value="region">Chosen export region</option></select></label><label>Resolution<select name="scale"><option value="1">1× · 72 canvas pixels/inch</option><option value="2" selected>2× · 144 pixels/inch</option><option value="4">4× · 288 pixels/inch</option></select></label><label class="check"><input name="background" type="checkbox" checked> Include canvas background</label></div><p class="notice">Annotated PDF keeps original PDF text and vectors and adds vector ink. Original PDF pages stay opaque; dark viewing mode is display-only. Vector canvas export is for notes without PDF backgrounds. Flattened PDF preserves the on-screen appearance as images. Unicode text in vector exports uses an image fallback.</p><p class="notice">Searchable export does not support rotated source or canvas pages. Flattened PDF turns text into pixels. Cancel before Export to change these choices.</p><button id="preview-export">Update preview</button><img class="export-preview" alt="Export preview"><div class="error"></div>`;
     const d = dialog("Export your notes", body, [
       { label: "Cancel", run: (d) => d.close() },
       {
         label: "Export",
         primary: true,
         run: async (d) => {
+          if (busy) return;
+          busy = true;
           try {
             const opts = getOptions();
+            body.querySelector(".error").textContent = "Preparing export…";
             await prepare(opts);
             let bytes, ext;
             if (opts.format === "png") {
@@ -1776,6 +2110,10 @@ class App {
             this.pdf.pinCache = false;
           } catch (e) {
             body.querySelector(".error").textContent = e.message;
+          } finally {
+            busy = false;
+            this.pdf.pinCache = false;
+            this.pdf.trimCache();
           }
         },
       },
@@ -1803,15 +2141,34 @@ class App {
       };
     };
     const prepare = async (opts) => {
+      if (opts.format === "pages")
+        for (const o of this.doc.objects.filter((o) => o.type === "pdf")) {
+          const source = await this.pdf.load(this.doc.assets[o.asset]),
+            page = await source.getPage(o.page + 1);
+          if (o.rotation || page.rotate)
+            throw Error(
+              "Rotated PDF pages cannot preserve searchable content in this export. Choose Flattened PDF or remove rotation.",
+            );
+        }
       this.pdf.pinCache = true;
-      for (const o of this.doc.objects)
-        if (o.type === "pdf" && opts.format !== "pages")
-          await this.pdf.ensure(o, opts.scale);
+      const pages = this.doc.objects.filter(
+        (o) => o.type === "pdf" && opts.format !== "pages",
+      );
+      for (const [i, o] of pages.entries()) {
+        if (!d.open) throw Error("Preview cancelled.");
+        body.querySelector(".error").textContent =
+          `Preparing PDF page ${i + 1} of ${pages.length}…`;
+        await this.pdf.ensure(o, opts.scale);
+      }
       for (const asset of Object.values(this.doc.assets))
         if (asset.type === "image")
           await this.renderer.image(asset.data).decode();
     };
     body.querySelector("#preview-export").onclick = async () => {
+      if (busy) return;
+      busy = true;
+      const submit = d.querySelector(".dialog-foot .primary");
+      submit.disabled = true;
       try {
         const opts = getOptions();
         await prepare(opts);
@@ -1824,8 +2181,15 @@ class App {
         body.querySelector(".error").textContent = "";
       } catch (e) {
         body.querySelector(".error").textContent = e.message;
+      } finally {
+        busy = false;
+        submit.disabled = false;
+        this.pdf.pinCache = false;
+        this.pdf.trimCache();
       }
     };
+    body.querySelector("[name=format]").onchange = () =>
+      body.querySelector("#preview-export").click();
     body.querySelector("#preview-export").click();
   }
   fileMenu() {
@@ -1866,8 +2230,19 @@ class App {
       list = el("div", { class: "palette-list" });
     body.append(search, list);
     const d = dialog("Commands", body);
+    let active = 0;
+    const setActive = () => {
+      const buttons = [...list.querySelectorAll("button:not(:disabled)")];
+      active = Math.max(0, Math.min(active, buttons.length - 1));
+      list
+        .querySelectorAll("button")
+        .forEach((b) => b.classList.remove("active"));
+      buttons[active]?.classList.add("active");
+      buttons[active]?.scrollIntoView({ block: "nearest" });
+    };
     const render = () => {
       list.replaceChildren();
+      active = 0;
       for (const c of this.registry.commands.values())
         if (
           (c.label + " " + c.category)
@@ -1878,12 +2253,27 @@ class App {
             d.close();
             this.registry.run(c.id);
           });
+          b.disabled = !this.registry.available(c.id);
           b.append(
             el("span", { text: c.label }),
             el("kbd", { text: this.registry.bindings(c.id).join(", ") }),
           );
           list.append(b);
         }
+      setActive();
+    };
+    search.onkeydown = (e) => {
+      if (["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) e.preventDefault();
+      if (e.key === "ArrowDown") {
+        active++;
+        setActive();
+      }
+      if (e.key === "ArrowUp") {
+        active--;
+        setActive();
+      }
+      if (e.key === "Enter") list.querySelector("button.active")?.click();
+      if (e.key === "Escape") d.close();
     };
     search.oninput = render;
     render();
