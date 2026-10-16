@@ -26,7 +26,7 @@ Use a disposable new document. Save it as `Nocturne-test.nocturne`.
 | Quick properties | Click the width value beside the pen rail, enter `6`, then change opacity and smoothing. | New strokes use these settings. Earlier strokes remain unchanged. |
 | Navigation | Hold **Space**, drag, release and draw. Use Ctrl+wheel, then Ctrl+1. | Temporary pan returns to your prior tool. Zoom is centered at the cursor. Fit brings notes back into view. |
 | Text safety | Choose **T**, click the canvas, type `BEVT 123` and a math formula. Click Done. | The text remains editable; typing letters/numbers does not switch tools or presets. Double-click it using Select to edit again. |
-| Selection | Use **V**, click a stroke, drag it. Resize using the lower-right handle and rotate using the top handle. | Object geometry remains editable. Ctrl+D duplicates. Ctrl+Z / Ctrl+Y reverse and restore the changes. |
+| Selection | Use **V**, click a stroke, drag it. Resize using any corner or edge handle and rotate using the top handle. | Object geometry remains editable. Ctrl+D duplicates. Ctrl+Z / Ctrl+Y reverse and restore the changes. |
 | Erasers | Use **E** on a stroke. Undo. Find **Partial eraser** in Ctrl+K and erase through its middle. | Whole eraser removes one stroke; partial eraser splits it. Undo restores it. |
 | Screenshot | Take a Windows snip, return to Nocturne and press Ctrl+V. Resize the image; open the inspector and click Lock. Select a pen and annotate. | Image appears, transforms, then stays protected while ink is added above it. |
 | PDF | Import `examples/two-page-worksheet.pdf` (included). Choose all pages, vertical layout. Annotate both pages. | Both differently sized pages appear on a locked PDF layer. Ink remains editable on the Notes layer. |
@@ -72,10 +72,24 @@ npm run test:ui
 
 Record the action, expected/actual result, Windows version, tablet model/driver, and whether it happens with both mouse and stylus. For PDF issues, note page count, original page rotation and whether the failure is in viewing or export. Save a disposable `.nocturne` reproduction if possible.
 
-If native launch fails, try the source launch above and copy the terminal error. The delivery environment could build the unpacked Windows app but could not launch Electron, so native startup, hardware pressure, clipboard variants and the desktop restart test still need your Windows-session check. See `VERIFICATION.md` for the exact completed checks and limitations.
+If native launch fails, try the source launch above and copy the terminal error. Native startup, screenshot clipboard paste and desktop restart have now passed automated tests. Hardware pressure, palm contact, touch and additional clipboard file variants still need your Windows-session check. See `VERIFICATION.md` for the exact completed checks and limitations.
 
 ### Move and resize imported images and PDF pages
 1. Choose Select (V), then click an image or PDF page.
 2. If locked, click **Unlock image / PDF to move** in the inspector. Other objects remain locked. Tab hides the inspector again.
 3. Drag the image body to move it. Drag any circular corner or edge handle to resize. Media corners preserve proportions; hold Shift for free corner resizing. Edge handles stretch one dimension (Shift preserves proportions).
 4. Check all four corners and four edges, then Ctrl+Z / Ctrl+Y to undo / redo. Save and reopen to check the position persists. Repeat at different zoom levels and with a PDF page.
+
+
+## 1.1 usability acceptance checks
+
+- Rename a document, press Ctrl+Shift+S: the proposed filename matches its name. Ctrl+S on an existing file continues saving to that file.
+- Draw using each preset: the outlined cursor and tool badge remain visible while pressed, and the pen badge matches the ink color. Eraser size is independent of pen width and the circle matches the erased area.
+- Change width/opacity/smoothing from the quick popover or inspector. The preset indicator clears when any preset property differs. Click a preset to restore its settings.
+- Select differently colored strokes, change **Selected objects** color, then undo once. Each original color returns; the drawing preset stays unchanged.
+- Ctrl+K opens Commands. Type, use Up/Down, Enter to run, Escape to dismiss. Disabled actions cannot run. Enter submits simple dialogs; their close buttons cancel cleanly.
+- In an 800-pixel window, open the properties drawer, scroll it, use More for hidden header actions, and close tabs with their × buttons. Settings offers interface scale and larger controls.
+- Import a PDF: check the page count, thumbnails and placement preview before importing. Annotated PDF retains original searchable content; flattened PDF rasterizes it. Rotated pages are flagged before export processing.
+- Try 100%, 150% and 200% Windows display scaling on your device. Browser interface-scale checks do not replace this hardware test. Check pen pressure, palm contact and touch navigation separately.
+
+Automated save/recovery failure tests use injected delayed/failing storage, never fill your real disk. Native desktop tests use a separate profile and test-only files; they temporarily replace the clipboard image.

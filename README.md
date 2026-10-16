@@ -110,3 +110,11 @@ For renderer integration tests, run `npm run dev` and open `/verify.html`. It ru
 
 See [VERIFICATION.md](VERIFICATION.md) for checks actually completed in the delivery environment and remaining limitations. Hardware pen pressure, touch rejection and native clipboard variants require testing on your own tablet/Windows session.
 
+
+## Version 1.1 usability update
+
+Tool-specific cursor badges stay visible while drawing, and pen/highlighter feedback follows the ink color. Erasers have their own diameter and sweep between input samples. Save and Save As suggest the document name, with revision-safe save/recovery tracking so edits made during a write remain unsaved.
+
+The preset-first toolbar now includes SVG tools, Shapes, Import, and More. Quick properties are contextual popovers; selection style edits are distinct from future ink settings. Keyboard navigation, dialog dismissal, responsive properties, tab close buttons, PDF placement previews, and memory-bounded page caches are covered by new regression tests.
+
+See [TESTING.md](TESTING.md) for hands-on checks and [VERIFICATION.md](VERIFICATION.md) for results, profiling evidence, and remaining hardware limitations.

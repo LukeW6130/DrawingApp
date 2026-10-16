@@ -1,0 +1,39 @@
+PASS preset chooses blue ink
+PASS undo drawing
+PASS redo drawing
+PASS background changes preserve stroke colors
+PASS shortcut profile persists to storage
+PASS keyboard command dispatch
+PASS typing does not trigger pen shortcut
+PASS editable Unicode text commits
+PASS image resize and lock
+PASS locked image is protected from editing
+PASS undo object change
+PASS redo object change
+PASS undo PDF import removes source asset
+PASS redo PDF import restores both pages
+PASS PDF.js renders multiple pages
+PASS annotated export preserves both original page sizes
+PASS annotated PDF retains searchable original text
+PASS editable project and embedded PDF round trip
+PASS autosave recovery contains all objects and assets
+PASS large-document rendering culls offscreen objects
+INFO 20,000-object index + visible frame: 12.0 ms
+PASS transparent PNG omits background
+PASS changing width clears preset indicator
+PASS color synchronizes quick controls
+PASS inspector width synchronizes quick controls
+PASS pressed pen cursor uses ink color
+PASS eraser cursor matches erase diameter
+PASS header close resolves ask promise
+PASS Enter/form submission cannot duplicate asynchronous actions
+PASS form submission resolves result
+PASS palette Down changes active result
+PASS palette Up restores active result
+PASS palette Enter runs command and closes
+PASS failed recovery blocks closing and explains retry
+PASS PDF import shows page thumbnails and placement preview
+PASS closing the active last tab preserves a valid current document
+PROFILE {"visibleStrokes":3000,"visiblePoints":120000,"viewport":[1226,624],"dpr":1,"frameMedianMs":8.700000002980232,"frameMaxMs":10.700000002980232,"pdfPages":24,"pdfRenderMs":400.1000000089407,"pdfCachePeakMiB":126.68522644042969,"pdfCachePages":17,"heapMiB":51.89664840698242}
+
+ALL 35 INTEGRATION CHECKS PASSED

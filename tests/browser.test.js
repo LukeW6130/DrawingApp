@@ -1,3 +1,5 @@
+import { profile } from "./profile.browser.js";
+import { feedbackChecks } from "./feedback.browser.js";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import {
   newDocument,
@@ -254,6 +256,9 @@ try {
     "transparent PNG omits background",
   );
   n.fit();
+  await feedbackChecks(n, check);
+  if (new URLSearchParams(location.search).has("profile"))
+    results.push("PROFILE " + JSON.stringify(await profile(n)));
   document.querySelector("#verification").textContent =
     results.join("\n") +
     "\n\nALL " +

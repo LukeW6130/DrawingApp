@@ -1,26 +1,33 @@
-# Verification record
+# Nocturne 1.1 verification — October 16, 2026
 
-The delivered source was checked on Windows in the Codex execution environment. These results describe what ran here, rather than implying that the tablet or standalone desktop app was tested.
+## Completed
 
-| Check | Result |
-|---|---|
-| `npm test` | 15/15 passed (including eight-handle image/PDF pointer resizing, movement, undo/redo, proportional scaling and zoom-aware handle targeting): editable project round-trip, schema validation, undo/redo, partial erase, geometry, background independence, 20,000-object spatial lookup, page ranges, shortcut conflict/profile behavior, and atomic save. |
-| `npm run build` | Passed. Vite produced the production renderer and bundled PDF.js worker. |
-| `verify.html` browser integration | 21/21 passed. Covered presets, keyboard dispatch, typing safety, image resize/lock, two-page PDF rendering, annotated export with original page dimensions and searchable text, project assets, recovery data, transparent PNG, and viewport culling. The 20,000-object index and one visible frame took about 13 ms in the test browser; this is one sample, not a frame-rate guarantee. |
-| Manual browser UI | Canvas layout, stroke drawing, text editor, shortcut editor, appearance controls and recovery dialog opened and responded. |
-| Windows unpacked build | `electron-builder --win --x64 --dir` completed and produced `release/win-unpacked/Nocturne Notes.exe` with its runtime files. |
-| Single-file portable installer | The NSIS packaging process could not spawn in the restricted execution environment. The complete unpacked application is delivered as a ZIP. |
-| Native Electron startup and `test:ui` | The restricted execution environment terminated Electron before its UI started. This remains unverified here. |
-| Hardware pen/touch | No drawing tablet was attached to the execution environment. Pressure and touch behavior require the user's device test. |
-| Native Windows clipboard screenshot/PDF-file paste | The Electron clipboard bridge was implemented but could not be exercised because native Electron startup was blocked. |
+- 23/23 Node regression tests: revision-safe saves, immutable recovery snapshots and propagated failures, filename sanitization, preset matching, swept erasing of freehand/recognized lines, targeted object history, and existing model/geometry/storage checks.
+- Production Vite build passed.
+- Native Electron smoke test passed outside the execution sandbox: mouse drawing, presets, undo/redo, text, PDF rendering/export, image resize/lock, real Windows screenshot clipboard paste, project save, recovery after restart, and shortcut/theme persistence. The clipboard implementation was updated to Electron 44's asynchronous API after this test exposed the obsolete calls.
+- 35/35 browser integration checks passed. Browser integration results and performance observations are recorded in [browser-results.txt](docs/evidence/browser-results.txt). Original PDF page sizes and searchable text preservation are retained in the suite.
+- Default/custom themes and narrow/large-interface layouts are captured under [docs/evidence](docs/evidence).
 
-Open [TESTING.md](TESTING.md) for a repeatable Windows test covering the remaining native and hardware checks. The test PDF and editable project are in `examples/`.
+## Performance
 
-## Known functional limits
+Intel Core Ultra 9 288V, 8 logical cores, 31.6 GiB RAM, Windows, Node 24.21.0. Fixture: 3,000 strokes / 120,000 points / 6.28 MiB serialized document. Seven synchronous repetitions; medians below are observations, not latency guarantees.
 
-- The annotated PDF exporter rejects pages with nonzero source rotation metadata or PDF objects rotated on the canvas. Flattened PDF remains available for these pages.
-- PDF display renders visible pages at zoom-dependent resolution with a memory limit; a very large source page may hit the limit. Annotated export uses the original PDF data instead of the display bitmap.
-- Recognition is a basic geometry heuristic. It does not recognize handwritten text or complex diagrams.
-- Touch supports one-finger pan, draw, or ignore. Pinch zoom and palm rejection depend on the device/browser and are not fully implemented.
-- Undo history keeps 150 checkpoints. It avoids copying immutable asset strings, but a very large document may make edit checkpoints expensive.
-- The delivered executable is unsigned. Windows may show publisher warnings when opening it.
+| Operation | Before | After |
+|---|---:|---:|
+| Commit transform of 100 objects | 148.01 ms | 4.49 ms |
+| Undo + redo of that transform | 224.80 ms | 6.52 ms |
+| Spatial index rebuild | 0.34 ms | 0.21 ms |
+| Full document snapshot | 50.99 ms | 54.03 ms |
+
+Transform and selected-style history now snapshots only affected objects. Full snapshots remain for structural edits, so very large drawing/erase transactions can still pause. Index rebuild cost did not justify a broad indexing redesign. Run `node scripts/benchmark.mjs` to reproduce. Raw before/after reports are included under docs/evidence.
+
+The browser fixture also renders 3,000 visible strokes and a 24-page PDF session. Page-image caching is bounded to 128 MiB in normal viewing; pinned export preparation has a 256 MiB limit and returns an actionable error above it. These budgets do not include source PDFs, JS objects, or all GPU allocations.
+
+## Remaining practical limits
+
+- Actual pen pressure, palm contact, touch navigation and Windows display scaling require the user's hardware. Interface-scale screenshots exercise layout, not OS scaling or tablet drivers.
+- Native screenshot-image clipboard paste passed; CF_HDROP/FileNameW clipboard file variants have not been exercised on every source application.
+- Import preview can be cancelled before applying. Export preview preparation stops after cancellation between page operations. Once final export/save starts, that operation finishes or reports failure; there is no mid-write cancellation.
+- Full-history snapshots remain for structural edits. Very large documents still merit additional profiling.
+- Searchable PDF export rejects rotated source/canvas pages; flattened PDF is the fallback. Recognition is geometric, not handwriting OCR. Touch remains one-finger pan/draw/ignore; pinch and palm rejection are not implemented.
+- The Windows application is unsigned. Keep all runtime files together when extracting the ZIP.

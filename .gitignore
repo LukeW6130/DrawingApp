@@ -4,3 +4,4 @@ release/
 test-results/
 *.log
 .cache/
+outputs/
