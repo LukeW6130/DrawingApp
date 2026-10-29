@@ -79,6 +79,7 @@ class App {
     this.inspectorVisible = false;
     this.toolbarVisible = true;
     this.recovery = new RecoveryWriter();
+    this.recoveryPending = true;
     this.persistTimer = null;
     this.TOOLS = TOOLS;
   }
@@ -112,7 +113,12 @@ class App {
     this.registerCommands();
     this.registerPropertyCommands();
     for (const c of this.registry.commands.values()) {
-      if (c.id.startsWith("selection.") && c.id !== "selection.unlockAll")
+      if (
+        c.id.startsWith("selection.") &&
+        !["selection.all", "selection.clear", "selection.unlockAll"].includes(
+          c.id,
+        )
+      )
         c.available = () => this.selected(true).length > 0;
       if (c.id === "edit.undo")
         c.available = () => this.history.undoStack.length > 0;
@@ -748,7 +754,7 @@ class App {
       e.preventDefault();
       if (e.repeat && command.hold) return;
       if (command.hold) this.heldCode = e.code;
-      command.run();
+      this.registry.run(command.id);
     });
     window.addEventListener("keyup", (e) => {
       if (e.code === this.heldCode) {
@@ -1774,6 +1780,8 @@ class App {
     );
   }
   async autosave() {
+    // Preserve the previous session until recovery has been explicitly resolved.
+    if (this.recoveryPending) return;
     try {
       await this.recovery.write(this.tabs, (docs) =>
         window.desktop
@@ -1789,14 +1797,18 @@ class App {
     }
   }
   async restoreRecovery() {
+    this.recoveryPending = true;
     let items = [];
     try {
       items = window.desktop
         ? await desktop.recover()
         : JSON.parse(localStorage.getItem("nocturne.recovery") || "[]");
     } catch {}
-    if (!items.some((t) => t.dirty)) return;
-    dialog(
+    if (!items.some((t) => t.dirty)) {
+      this.recoveryPending = false;
+      return;
+    }
+    const recoveryDialog = dialog(
       "Recover your notes",
       `<p>Recovery copies are available for ${items.filter((t) => t.dirty).length} unsaved document(s).</p>`,
       [
@@ -1805,6 +1817,7 @@ class App {
           run: async (d) => {
             if (window.desktop) await desktop.markClean();
             else localStorage.removeItem("nocturne.recovery");
+            this.recoveryPending = false;
             d.close();
           },
         },
@@ -1813,19 +1826,19 @@ class App {
           primary: true,
           run: (d) => {
             this.safe(() => {
+              const recovered = items.map((t) => ({
+                ...t,
+                doc: deserialize(JSON.stringify(t.doc)),
+              }));
               this.tabs = [];
-              for (const t of items)
-                this.addTab(
-                  deserialize(JSON.stringify(t.doc)),
-                  t.path,
-                  t.dirty,
-                );
+              for (const t of recovered) this.addTab(t.doc, t.path, t.dirty);
               this.activate(
                 Math.max(
                   0,
                   this.tabs.findIndex((tab) => tab.dirty),
                 ),
               );
+              this.recoveryPending = false;
               this.toast(
                 "Recovered editable notes. Save a project to keep them.",
               );
@@ -1834,6 +1847,11 @@ class App {
           },
         },
       ],
+    );
+    // Closing or escaping the prompt must not silently discard recoverable work.
+    recoveryDialog.querySelector(".dialog-head button").remove();
+    recoveryDialog.addEventListener("cancel", (event) =>
+      event.preventDefault(),
     );
   }
   async chooseAssets() {

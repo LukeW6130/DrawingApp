@@ -65,6 +65,7 @@ npm run test:ui
 ```
 
 - `npm test`: model, shortcuts, geometry, spatial index and atomic save tests.
+- `npm run test:browser`: headless recovery and Select All regressions, followed by the browser integration suite. Install the test browser with `npx playwright install chromium`, or use installed Edge in PowerShell with `$env:BROWSER_CHANNEL='msedge'; npm run test:browser`. This uses isolated browser contexts and starts its own local Vite server. Recovery checks wait nine seconds with the prompt open, test Escape and reload, then verify both Recover and Discard. Select All is exercised through the registry, Commands panel and Ctrl+A.
 - `npm run test:ui`: desktop workflow through Playwright, including the real Windows clipboard bridge and restart. It uses a separate `test-results/electron-profile` and test-only files. The screenshot clipboard test temporarily replaces your Windows clipboard contents.
 - `npm run dev`, then visit `http://127.0.0.1:5173/verify.html`: browser integration suite with generated image/PDF fixtures. Use the port printed by Vite if it differs. It writes test settings and browser recovery data for that localhost origin, separate from desktop settings.
 
